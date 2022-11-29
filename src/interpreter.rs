@@ -87,7 +87,7 @@ fn parse_nums(args: &[Expr]) -> ScmResult<Vec<ScmNumber>> {
     }
 }
 
-pub fn mk_env<'a>() -> Env<'a> {
+pub(crate) fn mk_env<'a>() -> Env<'a> {
     let mut ops: HashMap<String, Expr> = HashMap::new();
     ops.insert(
         "+".to_string(),
@@ -283,7 +283,7 @@ pub fn mk_env<'a>() -> Env<'a> {
     }
 }
 
-pub fn eval_define(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+pub(crate) fn eval_define(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
     if args.len() > 2 {
         return Err(ScmErr::Reason(
             "'define' only accepts two forms".to_string(),
@@ -380,7 +380,7 @@ fn env_get(s: &str, env: &Env) -> Option<Expr> {
     }
 }
 
-pub fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
+pub(crate) fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
     match exp {
         Expr::Bool(b) => Ok(Expr::Bool(*b)),
         Expr::Quote(b) => Ok(Expr::Quote(b.clone())),
@@ -418,7 +418,7 @@ pub fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
     }
 }
 
-pub fn parse_eval(input: Vec<String>, env: &mut Env, line_num: i32) -> ScmResult<Expr> {
+pub(crate) fn parse_eval(input: Vec<String>, env: &mut Env, line_num: i32) -> ScmResult<Expr> {
     let (parsed, unparsed) = match parse(&input) {
         Ok((parsed, unparsed)) => (parsed, unparsed),
         Err(e) => {

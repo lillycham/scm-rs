@@ -22,7 +22,7 @@ impl<I: Iterator> GentleIterator<I> for Peekable<I> {
     }
 }
 
-pub fn tokenise<I>(iter: &mut Peekable<I>) -> Vec<String>
+pub(crate) fn tokenise<I>(iter: &mut Peekable<I>) -> Vec<String>
 where
     I: Iterator<Item = char>,
 {

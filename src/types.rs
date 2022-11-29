@@ -11,7 +11,7 @@ use std::{
 
 #[allow(dead_code)]
 #[derive(Debug)]
-pub enum ScmErr {
+pub(crate) enum ScmErr {
     Reason(String),
 }
 
@@ -23,16 +23,16 @@ impl std::fmt::Display for ScmErr {
     }
 }
 
-pub type ScmResult<T> = Result<T, ScmErr>;
+pub(crate) type ScmResult<T> = Result<T, ScmErr>;
 
 #[derive(Clone)]
-pub struct ScmLambda {
+pub(crate) struct ScmLambda {
     pub(crate) params: Rc<Expr>,
     pub(crate) body: Rc<Expr>,
 }
 
 #[derive(Clone)]
-pub enum Expr {
+pub(crate) enum Expr {
     Floating(f64),
     Rational(Rational),
     Integral(i128),
@@ -60,7 +60,7 @@ pub(crate) enum Token {
 
 #[allow(dead_code)]
 impl Token {
-    pub fn get(ch: char) -> Token {
+    pub(crate) fn get(ch: char) -> Token {
         match ch {
             '(' => Token::LParen,
             ')' => Token::RParen,
@@ -69,12 +69,12 @@ impl Token {
     }
 }
 #[allow(dead_code)]
-pub struct TokenIterator<I: Iterator<Item = char>> {
+pub(crate) struct TokenIterator<I: Iterator<Item = char>> {
     inner: Peekable<I>,
 }
 #[allow(dead_code)]
 impl<I: Iterator<Item = char>> TokenIterator<I> {
-    pub fn new(inner: I) -> Self {
+    pub(crate) fn new(inner: I) -> Self {
         TokenIterator {
             inner: inner.peekable(),
         }
@@ -107,24 +107,24 @@ impl std::fmt::Display for Expr {
     }
 }
 
-pub struct Env<'a> {
+pub(crate) struct Env<'a> {
     pub(crate) ops: HashMap<String, Expr>,
     pub(crate) parent_scope: Option<&'a Env<'a>>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Rational {
-    pub num: i32,
-    pub den: i32,
+pub(crate) struct Rational {
+    pub(crate) num: i32,
+    pub(crate) den: i32,
 }
 
 #[allow(dead_code)]
 impl Rational {
-    pub fn new(num: i32, den: i32) -> Rational {
+    pub(crate) fn new(num: i32, den: i32) -> Rational {
         Rational { num, den }
     }
 
-    // pub fn add(&self, other: &Rational) -> Rational {
+    // pub(crate)fn add(&self, other: &Rational) -> Rational {
     //     Rational::new(
     //         self.num * other.den + self.den * other.num,
     //         self.den * other.den,
@@ -132,36 +132,36 @@ impl Rational {
     //     .pure_reduce()
     // }
 
-    // pub fn sub(&self, other: &Rational) -> Rational {
+    // pub(crate)fn sub(&self, other: &Rational) -> Rational {
     //     Rational {
     //         num: self.num * other.den - self.den * other.num,
     //         den: self.den * other.den,
     //     }
     // }
 
-    // pub fn mul(&self, other: &Rational) -> Rational {
+    // pub(crate)fn mul(&self, other: &Rational) -> Rational {
     //     Rational {
     //         num: self.num * other.num,
     //         den: self.den * other.den,
     //     }
     // }
 
-    // pub fn div(&self, other: &Rational) -> Rational {
+    // pub(crate)fn div(&self, other: &Rational) -> Rational {
     //     Rational {
     //         num: self.num * other.den,
     //         den: self.den * other.num,
     //     }
     // }
 
-    pub fn to_float(&self) -> f64 {
+    pub(crate) fn to_float(&self) -> f64 {
         self.num as f64 / self.den as f64
     }
 
-    pub fn to_string(&self) -> String {
+    pub(crate) fn to_string(&self) -> String {
         format!("{}%{}", self.num, self.den)
     }
 
-    pub fn gcd(a: i32, b: i32) -> i32 {
+    pub(crate) fn gcd(a: i32, b: i32) -> i32 {
         if b == 0 {
             a
         } else {
@@ -169,19 +169,19 @@ impl Rational {
         }
     }
 
-    pub fn reduce(&mut self) {
+    pub(crate) fn reduce(&mut self) {
         let gcd = Rational::gcd(self.num, self.den);
         self.num /= gcd;
         self.den /= gcd;
     }
 
-    pub fn pure_reduce(&self) -> Rational {
+    pub(crate) fn pure_reduce(&self) -> Rational {
         let mut r = self.clone();
         r.reduce();
         r
     }
 
-    pub fn from_float(f: f64) -> Rational {
+    pub(crate) fn from_float(f: f64) -> Rational {
         let mut num = f as i32;
         let mut den = 1;
         while num as f64 / den as f64 != f {
@@ -191,7 +191,7 @@ impl Rational {
         Rational { num, den }
     }
 
-    pub fn from_string(s: &str) -> Result<Rational, &'static str> {
+    pub(crate) fn from_string(s: &str) -> Result<Rational, &'static str> {
         let mut parts = s.split("%");
         let num = parts.next().ok_or("no parse")?.parse::<i32>();
         let den = parts.next().ok_or("no parse")?.parse::<i32>();
@@ -203,7 +203,7 @@ impl Rational {
         }
     }
 
-    pub fn from_int(i: i32) -> Rational {
+    pub(crate) fn from_int(i: i32) -> Rational {
         Rational { num: i, den: 1 }
     }
 }
