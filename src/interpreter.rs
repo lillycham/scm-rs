@@ -1,7 +1,7 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, fs, io};
 
 use crate::{
-    lexer::{parse, parse_float, parse_floats, parse_integrals, parse_list_of_symbols, parse_rats},
+    lexer::{parse, parse_floats, parse_integrals, parse_list_of_symbols, parse_rats, tokenise, parse_integral},
     types::*,
 };
 
@@ -163,25 +163,6 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
         }),
     );
 
-    ops.insert(
-        "'".to_string(),
-        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
-            let list = match args.first() {
-                Some(Expr::List(l)) => Ok(l.clone()),
-                _ => Err(ScmErr::Reason("expected a list".to_string())),
-            }?;
-            Ok(Expr::List(list))
-        }),
-    );
-
-    ops.insert(
-        "exit".to_string(),
-        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
-            let code = parse_float(&args[0])?.round() as i32;
-            std::process::exit(code);
-        }),
-    );
-
     ops.insert("=".to_string(), Expr::Func(comparison!(|a, b| a == b)));
 
     ops.insert(">".to_string(), Expr::Func(comparison!(|a, b| a > b)));
@@ -277,9 +258,33 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
         }),
     );
 
+    // (define apply (lambda (fn x) (fn x)))
+    // Couldn't figure out how to implement this in Rust, so it lives in schemeland
+    // ops.insert(
+    //     "apply".into(),
+    //     Expr::Lambda (
+    //         ScmLambda {
+    //         params: Rc::new(Expr::List(vec![Expr::Symbol("fn".into()), Expr::Symbol("x".into())])),
+    //         body: Rc::new(Expr::List(vec![
+    //             Expr::Symbol("fn".into()),
+    //             Expr::Symbol("x".into()),
+    //         ]))
+    //     })
+    // );
+
+    //);
     Env {
         ops,
         parent_scope: None,
+    }
+}
+
+fn include_file(filename: &str, env: &mut Env) -> ScmResult<()> {
+    let lib = fs::read_to_string(filename).expect("Lib not found!");
+    let toks = tokenise(&mut lib.chars().peekable());
+    match parse_eval(toks, env, 1) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
     }
 }
 
@@ -301,7 +306,7 @@ pub(crate) fn eval_define(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
 
     if env.ops.contains_key(&name_str) {
         return Err(ScmErr::Reason(
-            "can not overwrite a reserved operation or redefine an existing variable at global scope".to_string(),
+            format!("can not overwrite a reserved operation or redefine an existing variable ({}) at global scope", name_str),
         ));
     }
 
@@ -348,10 +353,121 @@ fn eval_lambda(args: &[Expr]) -> ScmResult<Expr> {
         .get(1)
         .ok_or(ScmErr::Reason("expected body in lambda form".to_string()))?;
 
+    // println!("#<proc> lambda ({:?}) ({:?})", params, body);
+
     Ok(Expr::Lambda(ScmLambda {
         params: Rc::new(params.clone()),
         body: Rc::new(body.clone()),
     }))
+}
+
+fn require_unsafe(env: &mut Env) -> ScmResult<()> {
+    let ops = &mut env.ops;
+
+    ops.insert(
+        "alloc-box".into(),
+        Expr::Func(|x: &[Expr]| -> ScmResult<Expr> {
+            let val = x.first().unwrap();
+            let box_ = Box::new(val.clone());
+            let ptr = Box::into_raw(box_);
+            Ok(Expr::Ptr(ptr))
+        }),
+    );
+
+    ops.insert(
+        "deref-box".into(),
+        Expr::Func(|x: &[Expr]| -> ScmResult<Expr> {
+            let ptr = x.first().unwrap();
+            let ptr = match ptr {
+                Expr::Ptr(p) => Ok(p),
+                _ => Err(ScmErr::Reason("expected a pointer".to_string())),
+            }?;
+            let box_ = unsafe { Box::from_raw(*ptr) };
+            Ok(*box_)
+        }),
+    );
+
+    Ok(())
+}
+
+// Special `require` form for loading the `sys` library
+fn require_sys(env: &mut Env) -> ScmResult<()> {
+    let ops = &mut env.ops;
+
+    // Insert sys ops into the environment
+    ops.insert(
+        "println".into(),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            let arg = args.first().unwrap();
+            println!("{}", arg);
+            Ok(Expr::Bool(true))
+        }),
+    );
+
+    ops.insert(
+        "readln".into(),
+        Expr::Func(|_args: &[Expr]| -> ScmResult<Expr> {
+            let mut input = String::new();
+            io::stdin()
+                .read_line(&mut input)
+                .expect("Failed to read line");
+            Ok(Expr::Symbol(input))
+        }),
+    );
+
+    ops.insert(
+        "die".into(),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            let arg = args.first().unwrap();
+            println!("{}", arg);
+            std::process::exit(1);
+        }),
+    );
+
+    ops.insert(
+        "exit".to_string(),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            let code = parse_integral(&args[0]).expect("Expected an integral value!") as i32;
+            std::process::exit(code);
+        }),
+    );
+
+
+    Ok(())
+}
+
+pub(crate) fn eval_require(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+    let filename = args.first().ok_or(ScmErr::Reason(
+        "expected at least one argument in require form".to_string(),
+    ))?;
+
+    Ok(match filename {
+        Expr::Quote(q) => {
+            match q.to_owned().as_ref() {
+                Expr::Symbol(s) => {
+                    match &s[..] {
+                        "sys" => {
+                            require_sys(env)?;
+                            Ok(Expr::Bool(true))
+                        }
+                        "unsafe" => {
+                            require_unsafe(env)?;
+                            Ok(Expr::Bool(true))
+                        }
+                        _ => {
+                            include_file(s, env)?;
+                            Ok(Expr::Bool(true))
+                        }
+                    }
+                },
+                _ => return Err(ScmErr::Reason("expected a quoted symbol".to_string())),
+            }
+        }
+        _ => Err(ScmErr::Reason(format!(
+            "expected symbol in require form, got {}",
+            filename
+        ))),
+    }?)
 }
 
 fn eval_builtin(expr: &Expr, args: &[Expr], env: &mut Env) -> Option<ScmResult<Expr>> {
@@ -360,6 +476,7 @@ fn eval_builtin(expr: &Expr, args: &[Expr], env: &mut Env) -> Option<ScmResult<E
             "define" => Some(eval_define(args, env)),
             "if" => Some(eval_if(args, env)),
             "lambda" => Some(eval_lambda(args)),
+            "require" => Some(eval_require(args, env)),
             _ => None,
         },
         _ => None,
@@ -402,7 +519,8 @@ pub(crate) fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
                         Expr::Func(f) => f(&eval_forms(args, env)?),
 
                         Expr::Lambda(l) => {
-                            let new_env = &mut mk_lambda_env(l.params, args, env)?;
+                            // println!("env: {:?}", env.ops);
+                            let new_env = &mut mk_lambda_env(l.params, args, env)?;                           
                             eval(&l.body, new_env)
                         }
 
@@ -415,6 +533,7 @@ pub(crate) fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
         }
         Expr::Func(_) => Err(ScmErr::Reason("unexpected form".to_string())),
         Expr::Lambda(_) => Err(ScmErr::Reason("unexpected form".to_string())),
+        Expr::Ptr(_) => Err(ScmErr::Reason("unexpected pointer at the top level".to_string())),
     }
 }
 

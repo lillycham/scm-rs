@@ -1,7 +1,8 @@
-use std::{env::args, fs};
+use std::{env::args, fs, rc::Rc};
 
-use interpreter::mk_env;
+use interpreter::{eval_require, mk_env};
 use repl::run;
+use types::Expr;
 
 use crate::{interpreter::parse_eval, lexer::tokenise};
 
@@ -15,6 +16,15 @@ const PROMPT: &str = "scm> ";
 fn main() {
     let env = &mut mk_env();
     let flags = args().collect::<Vec<_>>();
+
+    // load library
+    eval_require(
+        &[Expr::Quote(Rc::new(Expr::Symbol(
+            "libscm/lib.p.scm".into(),
+        )))],
+        env,
+    )
+    .expect("failed to load base library lib.p.scm");
 
     if flags.len() == 1 {
         run(env, PROMPT.to_string());

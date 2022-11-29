@@ -6,3 +6,4 @@ It is written in Rust.
 ## Features
 
 Scm.rs is very minimal.
+It includes some basic functions, primarily mathematical functions, and functional programming primitives.

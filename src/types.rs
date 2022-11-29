@@ -25,7 +25,7 @@ impl std::fmt::Display for ScmErr {
 
 pub(crate) type ScmResult<T> = Result<T, ScmErr>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct ScmLambda {
     pub(crate) params: Rc<Expr>,
     pub(crate) body: Rc<Expr>,
@@ -42,6 +42,33 @@ pub(crate) enum Expr {
     Lambda(ScmLambda),
     Bool(bool),
     Quote(Rc<Expr>),
+    Ptr(*mut Expr),
+}
+
+impl std::fmt::Debug for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Expr::Floating(n) => write!(f, "{}", n),
+            Expr::Rational(ref r) => write!(f, "{}", r),
+            Expr::Integral(n) => write!(f, "{}", n),
+            Expr::Symbol(ref s) => write!(f, "{}", s),
+            Expr::List(ref l) => {
+                write!(f, "(")?;
+                for (i, e) in l.iter().enumerate() {
+                    if i != 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{}", e)?;
+                }
+                write!(f, ")")
+            }
+            Expr::Func(_) => write!(f, "#<proc> function (likely builtin)"),
+            Expr::Lambda(ref l) => write!(f, "#<proc> (lambda {} {})", l.params, l.body),
+            Expr::Bool(b) => write!(f, "{}", b),
+            Expr::Quote(ref e) => write!(f, "'{}", e),
+            Expr::Ptr(p) => write!(f, "#<ptr> {:?}", p),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +129,7 @@ impl std::fmt::Display for Expr {
             Expr::Rational(r) => r.to_string(),
             Expr::Integral(i) => i.to_string(),
             Expr::Quote(b) => format!("'{}", b),
+            Expr::Ptr(p) => format!("#<ptr> {:?}", p),
         };
         write!(f, "{}", str)
     }
@@ -205,6 +233,12 @@ impl Rational {
 
     pub(crate) fn from_int(i: i32) -> Rational {
         Rational { num: i, den: 1 }
+    }
+}
+
+impl std::fmt::Display for Rational {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string())
     }
 }
 
