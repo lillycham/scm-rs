@@ -1,5 +1,4 @@
 use std::{iter::Peekable, rc::Rc, vec::IntoIter};
-
 use crate::types::*;
 
 trait GentleIterator<I: Iterator> {
@@ -49,6 +48,8 @@ where
         .or_else(|| check_string(iter))
         .or_else(|| check_hash(iter))
         .or_else(|| check_symbol(iter))
+
+    //println!("tokenise_single: {:?}", ret);
 }
 
 fn check_quote<I>(iter: &mut Peekable<I>) -> Option<String>
@@ -110,10 +111,12 @@ where
     }
 
     iter.next();
-    let value = iter.take_until(|c| *c != '"').collect();
+    let value: String = iter.take_until(|c| *c != '"').collect();
     iter.next();
 
-    Some(value)
+    //println!("string: \"{}\"", value);
+
+    Some(format!("\"{}\"", value))
 }
 
 fn check_hash<I>(iter: &mut Peekable<I>) -> Option<String>
@@ -128,6 +131,11 @@ where
     match iter.next() {
         Some('t') => Some("#t".to_string()),
         Some('f') => Some("#f".to_string()),
+        Some('v') => {
+            let val = iter.take(3).collect::<String>();
+            assert!(val == "oid");
+            Some("#void".to_string())
+        }
         Some(c) => panic!("Expected '#t' or '#f', got: '#{}'", c),
         None => panic!("Expected char after '#', none found"),
     }
@@ -219,6 +227,7 @@ pub(crate) fn parse_atom(tok: &str) -> Expr {
     match tok.as_ref() {
         "#t" => Expr::Bool(true),
         "#f" => Expr::Bool(false),
+        "#void" => Expr::Void,
 
         _ => {
             if let Ok(i) = tok.parse::<i128>() {
@@ -227,6 +236,14 @@ pub(crate) fn parse_atom(tok: &str) -> Expr {
                 Expr::Floating(n)
             } else if let Ok(r) = tok.parse::<Rational>() {
                 Expr::Rational(r)
+            } else if let Ok(s) = tok.parse::<String>() && tok.starts_with('"') {                
+                let res = (|| {
+                    let chars = &mut s.chars();
+                    chars.next();
+                    chars.next_back();
+                    chars.as_str().to_string()
+                })();                
+                Expr::String(res)
             } else {
                 Expr::Symbol(tok.to_string())
             }

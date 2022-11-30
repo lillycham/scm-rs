@@ -5,6 +5,7 @@ use std::{
     fmt,
     iter::{Peekable, Sum},
     ops::{Add, Div, Mul, Sub},
+    path::Path,
     rc::Rc,
     str::FromStr,
 };
@@ -37,12 +38,14 @@ pub(crate) enum Expr {
     Rational(Rational),
     Integral(i128),
     Symbol(String),
+    String(String),
     List(Vec<Expr>),
     Func(fn(&[Expr]) -> ScmResult<Expr>),
     Lambda(ScmLambda),
     Bool(bool),
     Quote(Rc<Expr>),
     Ptr(*mut Expr),
+    Void,
 }
 
 impl std::fmt::Debug for Expr {
@@ -52,6 +55,7 @@ impl std::fmt::Debug for Expr {
             Expr::Rational(ref r) => write!(f, "{}", r),
             Expr::Integral(n) => write!(f, "{}", n),
             Expr::Symbol(ref s) => write!(f, "{}", s),
+            Expr::String(ref s) => write!(f, "{}", s),
             Expr::List(ref l) => {
                 write!(f, "(")?;
                 for (i, e) in l.iter().enumerate() {
@@ -67,6 +71,7 @@ impl std::fmt::Debug for Expr {
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Quote(ref e) => write!(f, "'{}", e),
             Expr::Ptr(p) => write!(f, "#<ptr> {:?}", p),
+            Expr::Void => write!(f, ""),
         }
     }
 }
@@ -112,6 +117,7 @@ impl std::fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let str = match self {
             Expr::Symbol(s) => s.clone(),
+            Expr::String(s) => s.clone(),
             Expr::Floating(n) => n.to_string(),
             Expr::List(l) => {
                 let chars: Vec<String> = l.iter().map(|x| x.to_string()).collect();
@@ -130,6 +136,7 @@ impl std::fmt::Display for Expr {
             Expr::Integral(i) => i.to_string(),
             Expr::Quote(b) => format!("'{}", b),
             Expr::Ptr(p) => format!("#<ptr> {:?}", p),
+            Expr::Void => "".into(),
         };
         write!(f, "{}", str)
     }
@@ -138,6 +145,15 @@ impl std::fmt::Display for Expr {
 pub(crate) struct Env<'a> {
     pub(crate) ops: HashMap<String, Expr>,
     pub(crate) parent_scope: Option<&'a Env<'a>>,
+    pub(crate) search_path: Option<&'a Path>,
+    pub(crate) loaded_modules: Vec<Module>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Module {
+    pub(crate) name: String,
+    pub(crate) loaded_from: String,
+    // pub(crate) exports: HashMap<String, Expr>,
 }
 
 #[derive(Clone, Copy, Debug)]

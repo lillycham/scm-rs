@@ -1,0 +1,6 @@
+{
+	"name": "example-dep",
+	"version": "1.0",
+	"description": "Example dependency",
+	"requires": ["base"]
+}

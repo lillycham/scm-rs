@@ -1,10 +1,11 @@
-use std::{collections::HashMap, rc::Rc, fs, io};
+use std::{collections::HashMap, rc::Rc, fs::read_to_string, io, path::Path};
 
 use crate::{
     lexer::{parse, parse_floats, parse_integrals, parse_list_of_symbols, parse_rats, tokenise, parse_integral},
     types::*,
 };
 
+/// Compare numbers
 macro_rules! comparison {
     ($check_fn:expr) => {{
         |args: &[Expr]| -> ScmResult<Expr> {
@@ -35,7 +36,7 @@ fn mk_lambda_env<'a>(params: Rc<Expr>, args: &[Expr], outer: &'a mut Env) -> Scm
         )));
     };
 
-    let evaled_forms = eval_forms(args, outer)?;
+    let evaled_forms = eval_forms(args, None, outer)?;
     let mut ops: HashMap<String, Expr> = HashMap::new();
 
     for (k, v) in syms.iter().zip(evaled_forms.iter()) {
@@ -45,6 +46,8 @@ fn mk_lambda_env<'a>(params: Rc<Expr>, args: &[Expr], outer: &'a mut Env) -> Scm
     Ok(Env {
         ops,
         parent_scope: Some(outer),
+        search_path: outer.search_path.clone(),
+        loaded_modules: outer.loaded_modules.clone(),
     })
 }
 
@@ -55,7 +58,7 @@ enum ScmNumber {
     Integral(i128),
 }
 
-// generate try_from for ScmNumber variants
+/// generate try_from for ScmNumber variants
 macro_rules! try_from {
     ($t:ty, $v:ident) => {
         impl TryFrom<ScmNumber> for $t {
@@ -75,6 +78,7 @@ try_from!(f64, Floating);
 try_from!(Rational, Rational);
 try_from!(i128, Integral);
 
+/// Parse a list of expressions into a list of numbers
 fn parse_nums(args: &[Expr]) -> ScmResult<Vec<ScmNumber>> {
     if let Ok(n) = parse_floats(args) {
         Ok(n.into_iter().map(|x| ScmNumber::Floating(x)).collect())
@@ -87,13 +91,15 @@ fn parse_nums(args: &[Expr]) -> ScmResult<Vec<ScmNumber>> {
     }
 }
 
+/// Initialise the global environment
 pub(crate) fn mk_env<'a>() -> Env<'a> {
     let mut ops: HashMap<String, Expr> = HashMap::new();
     ops.insert(
         "+".to_string(),
         Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
             let n = parse_nums(args)?;
-            Ok(match n.first().unwrap() {
+            let fst = n.first().ok_or(ScmErr::Reason("expected at least one number".to_string()))?;
+            Ok(match fst {
                 ScmNumber::Floating(_) => {
                     Expr::Floating(n.into_iter().map(|x| f64::try_from(x).unwrap()).sum())
                 }
@@ -240,55 +246,16 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
     ops.insert("first".into(), ops["car".into()].clone());
     ops.insert("rest".into(), ops["cdr".into()].clone());
 
-    // Eval and apply
-    ops.insert(
-        "eval".into(),
-        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
-            let expr = args.first().unwrap();
-            let expr_unquoted = match expr {
-                Expr::Quote(e) => match **e {
-                    Expr::List(ref l) => Ok(Expr::List(l.clone())),
-                    _ => Err(ScmErr::Reason("expected a quoted list".to_string())),
-                },
-                _ => Err(ScmErr::Reason("expected a quoted list".to_string())),
-            }?;
-            let mut env = mk_env();
-
-            Ok(eval(&expr_unquoted, &mut env)?)
-        }),
-    );
-
-    // (define apply (lambda (fn x) (fn x)))
-    // Couldn't figure out how to implement this in Rust, so it lives in schemeland
-    // ops.insert(
-    //     "apply".into(),
-    //     Expr::Lambda (
-    //         ScmLambda {
-    //         params: Rc::new(Expr::List(vec![Expr::Symbol("fn".into()), Expr::Symbol("x".into())])),
-    //         body: Rc::new(Expr::List(vec![
-    //             Expr::Symbol("fn".into()),
-    //             Expr::Symbol("x".into()),
-    //         ]))
-    //     })
-    // );
-
-    //);
     Env {
         ops,
         parent_scope: None,
+        search_path: None,
+        loaded_modules: vec![],
     }
 }
 
-fn include_file(filename: &str, env: &mut Env) -> ScmResult<()> {
-    let lib = fs::read_to_string(filename).expect("Lib not found!");
-    let toks = tokenise(&mut lib.chars().peekable());
-    match parse_eval(toks, env, 1) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
-pub(crate) fn eval_define(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+/// Define an expression in the environment
+pub(crate) fn eval_define(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
     if args.len() > 2 {
         return Err(ScmErr::Reason(
             "'define' only accepts two forms".to_string(),
@@ -314,17 +281,18 @@ pub(crate) fn eval_define(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
         .get(0)
         .ok_or(ScmErr::Reason("Expected at least one form".to_string()))?;
 
-    let value_eval = eval(value, env)?;
+    let value_eval = eval(value, namespace, env)?;
 
     env.ops.insert(name_str, value_eval);
     Ok(name.clone())
 }
 
-fn eval_if(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+/// Evaluate an if expression
+fn eval_if(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
     let crit = args
         .first()
         .ok_or(ScmErr::Reason("Expected at least one form".to_string()))?;
-    match eval(crit, env)? {
+    match eval(crit, namespace, env)? {
         Expr::Bool(b) => {
             let branch = if b { 1 } else { 2 };
             let result = args.get(branch).ok_or(ScmErr::Reason(format!(
@@ -332,12 +300,14 @@ fn eval_if(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
                 branch
             )))?;
 
-            eval(result, env)
+            eval(result, namespace, env)
         }
         _ => Err(ScmErr::Reason(format!("unexpected criteria {}", crit))),
     }
 }
 
+/// Evaluate a lambda form and produce a lambda expression that can be applied
+/// to a list of arguments
 fn eval_lambda(args: &[Expr]) -> ScmResult<Expr> {
     if args.len() > 2 {
         return Err(ScmErr::Reason(
@@ -361,6 +331,50 @@ fn eval_lambda(args: &[Expr]) -> ScmResult<Expr> {
     }))
 }
 
+/// Eval a file and load it into the environment
+fn require_file(filename: &str, why_loaded: &str, env: &mut Env) -> ScmResult<()> {
+    let path = env.search_path.unwrap().join(filename);
+    let lib  = read_to_string(path).unwrap();
+    let toks = tokenise(&mut lib.chars().peekable());
+    let should_load = env.loaded_modules.clone().into_iter().filter(|m| m.name == filename).collect::<Vec<_>>().is_empty();
+
+    if !should_load {
+        return Ok(());
+    } else {
+        env.loaded_modules.push(Module {
+            name: filename.to_string(),
+            loaded_from: why_loaded.to_string(),
+            //exports: vec![],
+        });
+        match parse_eval(toks, Some(filename), env, 1) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Test if a mod is loaded
+pub(crate) fn should_load_mod(mod_name: &str, env: &Env) -> bool {
+    let loaded = env.loaded_modules.clone().into_iter().filter(|m| m.name == mod_name).collect::<Vec<_>>();
+    loaded.is_empty()
+}
+
+/// Add metadata for a synthetic module to the environment
+fn require_synthetic(module_name: Option<&str>, why_loaded: &str, env: &mut Env) -> ScmResult<()> {
+    let mod_name = module_name.unwrap_or("core").to_string() + "<synthetic>";
+    if !should_load_mod(module_name.unwrap(), env) {
+        return Ok(());
+    } else {
+        env.loaded_modules.push(Module {
+            name: mod_name,
+            loaded_from: why_loaded.to_string(),
+            //exports: vec![],
+        });        
+        Ok(())
+    }
+}
+
+/// Special form of require that loads the synthetic unsafe module
 fn require_unsafe(env: &mut Env) -> ScmResult<()> {
     let ops = &mut env.ops;
 
@@ -390,7 +404,32 @@ fn require_unsafe(env: &mut Env) -> ScmResult<()> {
     Ok(())
 }
 
-// Special `require` form for loading the `sys` library
+fn require_imperative_constructs(env: &mut Env) -> ScmResult<()> {
+    let ops = &mut env.ops;
+
+    ops.insert(
+        "begin".into(),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            for expr in args {
+                let unpacked = match expr {
+                    Expr::List(l) => Ok(l),
+                    Expr::Quote(q) => match **q {
+                        Expr::List(ref l) => Ok(l),
+                        _ => Err(ScmErr::Reason("expected a list".to_string())),
+                    },
+                    _ => Err(ScmErr::Reason("expected a list".to_string())),
+                }?;
+                eval(&Expr::List(unpacked.to_owned()), None, &mut mk_env())?;
+            };
+            
+            Ok(Expr::Void)
+        }),
+    );
+    Ok(())
+}
+
+
+/// Special `require` form for loading the `sys` library
 fn require_sys(env: &mut Env) -> ScmResult<()> {
     let ops = &mut env.ops;
 
@@ -400,7 +439,7 @@ fn require_sys(env: &mut Env) -> ScmResult<()> {
         Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
             let arg = args.first().unwrap();
             println!("{}", arg);
-            Ok(Expr::Bool(true))
+            Ok(Expr::Void)
         }),
     );
 
@@ -436,7 +475,18 @@ fn require_sys(env: &mut Env) -> ScmResult<()> {
     Ok(())
 }
 
-pub(crate) fn eval_require(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+/// Read a *module* and evaluate it, loading the contents into the environment
+/// Example: (require 'foo) loads the module *foo*
+/// Modules are loaded from the search path by require_file().
+/// If the module is already loaded, it is not reloaded, as loaded modules are
+/// tracked in the environment.
+/// 
+/// Synthetically loaded modules are modules that are loaded by the interpreter
+/// itself, and are not loaded from a file. They are loaded by a specialised
+/// function for each module, e.g. require_sys() for the sys module. The
+/// require_synthetic() function is used to load the metadata into the environment.
+/// A synthetic module path will be of the form `modname<synthetic>`.
+pub(crate) fn eval_require(args: &[Expr], why_loaded: &str, env: &mut Env) -> ScmResult<Expr> {
     let filename = args.first().ok_or(ScmErr::Reason(
         "expected at least one argument in require form".to_string(),
     ))?;
@@ -448,14 +498,25 @@ pub(crate) fn eval_require(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
                     match &s[..] {
                         "sys" => {
                             require_sys(env)?;
+                            require_synthetic(Some("sys"), why_loaded, env)?;
                             Ok(Expr::Bool(true))
                         }
+
                         "unsafe" => {
                             require_unsafe(env)?;
+                            require_synthetic(Some("unsafe"), why_loaded, env)?;
+                            Ok(Expr::Bool(true))
+                        }
+
+                        "imperative/constructs" => {
+                            require_imperative_constructs(env)?;
+                            require_synthetic(Some("imperative/constructs"), why_loaded, env)?;
                             Ok(Expr::Bool(true))
                         }
                         _ => {
-                            include_file(s, env)?;
+                            let search_path = env.search_path.clone().unwrap();
+                            let file = search_path.join(s.to_string());
+                            require_file(&file.to_str().unwrap(), why_loaded, env)?;
                             Ok(Expr::Bool(true))
                         }
                     }
@@ -470,21 +531,63 @@ pub(crate) fn eval_require(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
     }?)
 }
 
-fn eval_builtin(expr: &Expr, args: &[Expr], env: &mut Env) -> Option<ScmResult<Expr>> {
+fn eval_printenv(env: &Env, namespace: Option<&str>) -> ScmResult<Expr>{
+    use itertools::Itertools;
+    println!("op table (current scope):");
+    for key in env.ops.clone().keys().into_iter().sorted() {
+        println!("{: <10}: {:?}", key, env.ops[key]);
+    }
+    println!("loaded modules: {:#?}", env.loaded_modules.clone().into_iter().map(|m| (m.name,m.loaded_from)).collect::<Vec<_>>());
+    println!("search path: {:?}", env.search_path.unwrap_or(Path::new("")));
+    println!("in addition to the above ops, there are also the following builtin syntax forms:
+    - `define`
+    - `eval`
+    - `'`
+    - `lambda`
+    - `if`
+    - `require`
+    - `print-env`
+    ");
+
+    println!("namespace: {:?}", namespace.unwrap_or("???"));
+
+    Ok(Expr::Void)
+}
+
+fn eval_eval(args: &[Expr], module_name: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
+    let new_modname = module_name.unwrap_or("<eval>").to_string() + "::<dynamic eval>";
+    let expr = args.first().unwrap();
+    let unpacked = match expr {
+        Expr::Quote(q) => match **q {
+            Expr::List(ref l) => Ok(l),
+            _ => Err(ScmErr::Reason("expected a list".to_string())),
+        },
+        _ => Err(ScmErr::Reason("expected a quoted list".to_string())),
+    }?;
+    eval(&Expr::List(unpacked.to_owned()), Some(&new_modname), env)
+}
+
+fn eval_builtin(expr: &Expr, args: &[Expr], module_name: Option<&str>, env: &mut Env) -> Option<ScmResult<Expr>> {
     match expr {
         Expr::Symbol(s) => match s.as_str() {
-            "define" => Some(eval_define(args, env)),
-            "if" => Some(eval_if(args, env)),
+            "define" => Some(eval_define(args, module_name, env)),
+            "if" => Some(eval_if(args, module_name, env)),
             "lambda" => Some(eval_lambda(args)),
-            "require" => Some(eval_require(args, env)),
+            "require" => Some(eval_require(args,
+                &format!("loaded by require from {}",
+                module_name.unwrap_or("unknown")),
+                env
+            )),
+            "eval" => Some(eval_eval(args, module_name, env)),
+            "print-env" => Some(eval_printenv(env, module_name)),
             _ => None,
         },
         _ => None,
     }
 }
 
-fn eval_forms(args: &[Expr], env: &mut Env) -> ScmResult<Vec<Expr>> {
-    args.iter().map(|x| eval(x, env)).collect()
+fn eval_forms(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Vec<Expr>> {
+    args.iter().map(|x| eval(x, namespace, env)).collect()
 }
 
 fn env_get(s: &str, env: &Env) -> Option<Expr> {
@@ -497,13 +600,14 @@ fn env_get(s: &str, env: &Env) -> Option<Expr> {
     }
 }
 
-pub(crate) fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
+pub(crate) fn eval(exp: &Expr, namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
     match exp {
         Expr::Bool(b) => Ok(Expr::Bool(*b)),
         Expr::Quote(b) => Ok(Expr::Quote(b.clone())),
         Expr::Symbol(s) => {
             env_get(s, env).ok_or(ScmErr::Reason(format!("unexpected symbol {}", s)))
         }
+        Expr::String(s) => Ok(Expr::String(s.clone())),
         Expr::Floating(_) => Ok(exp.clone()),
         Expr::Rational(_) => Ok(exp.clone()),
         Expr::Integral(_) => Ok(exp.clone()),
@@ -511,17 +615,17 @@ pub(crate) fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
             let (first, args) = l.split_first().ok_or(ScmErr::Reason(
                 format!("missing procedure in expression \n   probably (), which is an empty function application\n   given: {}", exp),
             ))?;
-            match eval_builtin(first, args, env) {
+            match eval_builtin(first, args, namespace, env) {
                 Some(result) => result,
                 None => {
-                    let first_eval = eval(first, env)?;
+                    let first_eval = eval(first, namespace, env)?;
                     match first_eval {
-                        Expr::Func(f) => f(&eval_forms(args, env)?),
+                        Expr::Func(f) => f(&eval_forms(args, namespace, env)?),
 
                         Expr::Lambda(l) => {
                             // println!("env: {:?}", env.ops);
                             let new_env = &mut mk_lambda_env(l.params, args, env)?;                           
-                            eval(&l.body, new_env)
+                            eval(&l.body, namespace, new_env)
                         }
 
                         _ => Err(ScmErr::Reason(
@@ -534,10 +638,11 @@ pub(crate) fn eval(exp: &Expr, env: &mut Env) -> ScmResult<Expr> {
         Expr::Func(_) => Err(ScmErr::Reason("unexpected form".to_string())),
         Expr::Lambda(_) => Err(ScmErr::Reason("unexpected form".to_string())),
         Expr::Ptr(_) => Err(ScmErr::Reason("unexpected pointer at the top level".to_string())),
+        Expr::Void => Err(ScmErr::Reason("unexpected void".to_string())),
     }
 }
 
-pub(crate) fn parse_eval(input: Vec<String>, env: &mut Env, line_num: i32) -> ScmResult<Expr> {
+pub(crate) fn parse_eval(input: Vec<String>, namespace: Option<&str> ,env: &mut Env, line_num: i32) -> ScmResult<Expr> {
     let (parsed, unparsed) = match parse(&input) {
         Ok((parsed, unparsed)) => (parsed, unparsed),
         Err(e) => {
@@ -547,7 +652,7 @@ pub(crate) fn parse_eval(input: Vec<String>, env: &mut Env, line_num: i32) -> Sc
             )))
         }
     };
-    let evaluated = match eval(&parsed, env) {
+    let evaluated = match eval(&parsed, namespace, env) {
         Ok(evaluated) => evaluated,
         Err(e) => {
             return Err(ScmErr::Reason(format!(
@@ -558,7 +663,7 @@ pub(crate) fn parse_eval(input: Vec<String>, env: &mut Env, line_num: i32) -> Sc
     };
 
     if !unparsed.is_empty() {
-        parse_eval(unparsed.to_vec(), env, line_num + 1)
+        parse_eval(unparsed.to_vec(), namespace, env, line_num + 1)
     } else {
         Ok(evaluated)
     }
