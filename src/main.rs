@@ -1,4 +1,5 @@
 #![feature(string_remove_matches)]
+#![feature(let_chains)]
 use std::{fs, io::Read, path::Path, rc::Rc};
 
 use clap::{Parser, Subcommand};
