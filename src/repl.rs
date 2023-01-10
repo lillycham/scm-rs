@@ -21,6 +21,7 @@ pub(crate) fn run(env: &mut types::Env, prompt: String) {
         let toks = tokenise(&mut input.chars().peekable());
 
         match parse_eval(toks, Some("<repl context>"), env, 1) {
+            Ok(types::Expr::Void) => (),
             Ok(r) => println!("=> {}", r),
             Err(e) => println!("\x1b[31;m=> Error: {}\x1b[0m", e),
         }

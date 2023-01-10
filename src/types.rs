@@ -45,6 +45,7 @@ pub(crate) enum Expr {
     Bool(bool),
     Quote(Rc<Expr>),
     Ptr(*mut Expr),
+    Macro(ScmMacro),
     Void,
 }
 
@@ -72,7 +73,38 @@ impl std::fmt::Debug for Expr {
             Expr::Quote(ref e) => write!(f, "'{}", e),
             Expr::Ptr(p) => write!(f, "#<ptr> {:?}", p),
             Expr::Void => write!(f, ""),
+            Expr::Macro(_) => write!(f, "#<macro>"),
         }
+    }
+}
+
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let str = match self {
+            Expr::Symbol(s) => s.clone(),
+            Expr::String(s) => s.clone(),
+            Expr::Floating(n) => n.to_string(),
+            Expr::List(l) => {
+                let chars: Vec<String> = l.iter().map(|x| x.to_string()).collect();
+                format!("({})", chars.join(" "))
+            }
+            Expr::Func(f) => format!("#<proc> function at {:p} {{}}", &f).to_string(),
+            Expr::Lambda(l) => format!("#<proc> lambda at {:p} {{}}", &l).to_string(),
+            Expr::Bool(b) => {
+                if *b {
+                    "#t".to_string()
+                } else {
+                    "#f".to_string()
+                }
+            }
+            Expr::Rational(r) => r.to_string(),
+            Expr::Integral(i) => i.to_string(),
+            Expr::Quote(b) => format!("'{}", b),
+            Expr::Ptr(p) => format!("#<ptr> {:?}", p),
+            Expr::Void => "".into(),
+            Expr::Macro(_) => "#<macro>".to_string(),
+        };
+        write!(f, "{}", str)
     }
 }
 
@@ -113,41 +145,33 @@ impl<I: Iterator<Item = char>> TokenIterator<I> {
     }
 }
 
-impl std::fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let str = match self {
-            Expr::Symbol(s) => s.clone(),
-            Expr::String(s) => s.clone(),
-            Expr::Floating(n) => n.to_string(),
-            Expr::List(l) => {
-                let chars: Vec<String> = l.iter().map(|x| x.to_string()).collect();
-                format!("({})", chars.join(" "))
-            }
-            Expr::Func(f) => format!("#<proc> function at {:p} {{}}", &f).to_string(),
-            Expr::Lambda(l) => format!("#<proc> lambda at {:p} {{}}", &l).to_string(),
-            Expr::Bool(b) => {
-                if *b {
-                    "#t".to_string()
-                } else {
-                    "#f".to_string()
-                }
-            }
-            Expr::Rational(r) => r.to_string(),
-            Expr::Integral(i) => i.to_string(),
-            Expr::Quote(b) => format!("'{}", b),
-            Expr::Ptr(p) => format!("#<ptr> {:?}", p),
-            Expr::Void => "".into(),
-        };
-        write!(f, "{}", str)
-    }
-}
-
+#[derive(Debug, Clone)]
 pub(crate) struct Env<'a> {
     pub(crate) ops: HashMap<String, Expr>,
     pub(crate) parent_scope: Option<&'a Env<'a>>,
     pub(crate) search_path: Option<&'a Path>,
     pub(crate) loaded_modules: Vec<Module>,
+    //pub(crate) call_stack: Stack,
 }
+
+/// Encapsulate the state of execution in a continuation.
+#[derive(Debug, Clone)]
+pub(crate) struct Continuation {
+    pub(crate) expr: Rc<Expr>,
+    pub(crate) env: Rc<Env<'static>>,
+    pub(crate) stack: Stack,
+}
+
+/// A stack frame.
+#[derive(Debug, Clone)]
+pub(crate) struct Frame {
+    pub(crate) locals: HashMap<String, Expr>,
+    pub(crate) return_to: Continuation,
+    pub(crate) params: Rc<Expr>,
+}
+
+/// A Call Stack of stack frames.
+pub(crate) type Stack = Vec<Frame>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Module {
@@ -160,6 +184,12 @@ pub(crate) struct Module {
 pub(crate) struct Rational {
     pub(crate) num: i32,
     pub(crate) den: i32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ScmMacro {
+    pub(crate) params: Rc<Expr>,
+    pub(crate) body: Rc<Expr>,
 }
 
 #[allow(dead_code)]

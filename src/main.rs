@@ -21,7 +21,7 @@ const PROMPT: &str = "scm> ";
 #[command(propagate_version = true)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -62,24 +62,39 @@ fn main() {
     .expect("failed to load base library");
 
     match flags.command {
-        Commands::Run { file } => {
-            let mut file = fs::File::open(file).unwrap();
-            let mut input = String::new();
-            file.read_to_string(&mut input).unwrap();
-            let toks = tokenise(&mut input.chars().peekable());
-            match parse_eval(toks, Some("<file context>"), env, 1) {
-                Ok(r) => println!("=> {}", r),
-                Err(e) => println!("\x1b[31;m=> Error: {}\x1b[0m", e),
+        Some(c) => match c {
+            Commands::Run { file } => {
+                let mut file_ = if file == "-" {
+                    Box::new(std::io::stdin()) as Box<dyn Read>
+                } else {
+                    Box::new(fs::File::open(&file).unwrap()) as Box<dyn Read>
+                };
+                let mut input = String::new();
+                file_.read_to_string(&mut input).unwrap();
+                let toks = tokenise(&mut input.chars().peekable());
+                match parse_eval(
+                    toks,
+                    Some(&format!(
+                        "<file context: {}>",
+                        if file == "-" { "STDIN" } else { &file }
+                    )),
+                    env,
+                    1,
+                ) {
+                    Ok(r) => println!("=> {}", r),
+                    Err(e) => println!("\x1b[31;m=> Error: {}\x1b[0m", e),
+                }
             }
-        }
-        Commands::Repl => run(env, PROMPT.to_string()),
-        Commands::Install { package } => {
-            let result = package_manage::install_package_git_interface(package);
-            match result {
-                Ok(_) => {}
-                Err(e) => println!("\x1b[31;mError: {}\x1b[0m", e),
+            Commands::Install { package } => {
+                let result = package_manage::install_package_git_interface(package);
+                match result {
+                    Ok(_) => {}
+                    Err(e) => println!("\x1b[31;mError: {}\x1b[0m", e),
+                }
             }
-        }
+            Commands::Repl => run(env, PROMPT.to_string()),
+        },
+        None => run(env, PROMPT.to_string()),
     }
 
     // match &flags.command[..] {

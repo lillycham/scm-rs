@@ -38,9 +38,28 @@ fn mk_lambda_env<'a>(params: Rc<Expr>, args: &[Expr], outer: &'a mut Env) -> Scm
 
     let evaled_forms = eval_forms(args, None, outer)?;
     let mut ops: HashMap<String, Expr> = HashMap::new();
+    // let my_callstack = outer.call_stack.clone();
+    // let my_stackframe = Frame {
+    //     locals: HashMap::new(),
+    //     return_to: Continuation {
+    //         expr: Rc::new(Expr::Void),
+    //         env: Rc::new(Env {
+    //             ops: HashMap::new(),
+    //             parent_scope: None,
+    //             search_path: None,
+    //             loaded_modules: Vec::new(),
+    //             call_stack: my_callstack.clone()
+    //         }),
+    //         stack: my_callstack.clone()
+    //     },
+    //     params: Rc::new(Expr::Void)
+    // };
+
+    // my_callstack.push(my_stackframe);
 
     for (k, v) in syms.iter().zip(evaled_forms.iter()) {
         ops.insert(k.clone(), v.clone());
+        
     }
 
     Ok(Env {
@@ -48,6 +67,7 @@ fn mk_lambda_env<'a>(params: Rc<Expr>, args: &[Expr], outer: &'a mut Env) -> Scm
         parent_scope: Some(outer),
         search_path: outer.search_path.clone(),
         loaded_modules: outer.loaded_modules.clone(),
+        //call_stack: outer.call_stack.clone()
     })
 }
 
@@ -186,7 +206,7 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
                 print!("{}", arg);
             }
             println!();
-            Ok(Expr::Bool(true))
+            Ok(Expr::Void)
         }),
     );
 
@@ -242,17 +262,71 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
         }),
     );
 
+    ops.insert(
+        "list".into(),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            Ok(Expr::List(args.to_vec()))
+        }),
+    );
+
+    ops.insert(
+        "flip".into(),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            let (f, args) = args.split_at(1);
+            let f = f.first().unwrap();
+            let args = match args.first() {
+                Some(Expr::List(l)) => Ok(l.clone()),
+                _ => Err(ScmErr::Reason("expected a list".to_string())),
+            }?;
+            let mut new_args = vec![];
+            for arg in args {
+                new_args.push(f.clone());
+                new_args.push(arg.clone());
+            }
+            Ok(Expr::List(new_args))
+        }),
+    );
+
+    ops.insert(
+        "reverse".into(), 
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
+            let list = match args.first() {
+                Some(Expr::List(l)) => Ok(l.clone()),
+                _ => Err(ScmErr::Reason("expected a list".to_string())),
+            }?;
+            Ok(Expr::List(list.iter().rev().cloned().collect()))
+        }),
+    );
+
     // Aliases for list operations
     ops.insert("first".into(), ops["car".into()].clone());
     ops.insert("rest".into(), ops["cdr".into()].clone());
+
+    // File operations
+    
 
     Env {
         ops,
         parent_scope: None,
         search_path: None,
         loaded_modules: vec![],
+        //call_stack: vec![],
     }
 }
+
+fn eval_begin(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
+    let mut result = Expr::Void;
+
+    for arg in args {
+        let result_ = eval(arg, namespace, env)?;
+        result = result_;
+    }
+    Ok(result)
+}
+
+/// Call a function with the current continuation
+// fn eval_call_cc(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
+// }
 
 /// Define an expression in the environment
 pub(crate) fn eval_define(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
@@ -329,6 +403,86 @@ fn eval_lambda(args: &[Expr]) -> ScmResult<Expr> {
         params: Rc::new(params.clone()),
         body: Rc::new(body.clone()),
     }))
+}
+
+fn eval_macro(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+    if args.len() != 3 {
+        return Err(ScmErr::Reason(
+            "'defmacro' only accepts three forms".to_string(),
+        ));
+    }
+
+    let name = match args[0] {
+        Expr::Symbol(ref name) => name.clone(),
+        _ => return Err(ScmErr::Reason("expected symbol as first argument".to_string())),
+    };
+
+    let params = match args[1] {
+        Expr::List(ref params) => Rc::new(Expr::List(params.clone())),
+        _ => return Err(ScmErr::Reason("expected list as second argument".to_string())),
+    };
+
+
+    let body = match args[2] {
+        Expr::List(_) => Rc::new(args[2].clone()),
+        _ => return Err(ScmErr::Reason("expected list as third argument".to_string())),
+    };
+
+    let macro_fn = ScmMacro {
+        params,
+        body,
+    };
+
+    // Store the macro in the given environment
+    env.ops.insert(name, Expr::Macro(macro_fn));
+
+    Ok(Expr::Void)
+}
+
+fn expand_macro(macro_fn: &ScmMacro, args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
+    let mut bindings = HashMap::new();
+
+    // Bind the arguments to the macro parameters
+    let params = match &*macro_fn.params {
+        Expr::List(params) => params,
+        _ => return Err(ScmErr::Reason("expected list as macro parameters".to_string())),
+    };
+    for (param, arg) in params.iter().zip(args.iter()) {
+        match param {
+            Expr::Symbol(name) => {
+                bindings.insert(name.clone(), arg.clone());
+            }
+            _ => return Err(ScmErr::Reason("expected symbol as macro parameter".to_string())),
+        }
+    }
+
+    // Example of a macro expansion
+    // (define-macro (foo x) (list 'bar x))
+    // (foo 1)
+    // (list 'bar 1)
+
+    // Expand the macro body
+    let mut expanded = vec![];
+    let body = match &*macro_fn.body {
+        Expr::List(body) => body,
+        _ => return Err(ScmErr::Reason("expected list as macro body".to_string())),
+    };
+    for expr in body.iter() {
+        match expr {
+            Expr::Symbol(name) => {
+                if let Some(binding) = bindings.get(name) {
+                    expanded.push(binding.clone());
+                } else {
+                    expanded.push(expr.clone());
+                }
+            }
+            _ => expanded.push(expr.clone()),
+        }
+    }
+    let expanded = Expr::List(expanded.clone());
+
+    // Evaluate the expanded macro body
+    eval(&expanded, None, env)
 }
 
 /// Eval a file and load it into the environment
@@ -580,6 +734,8 @@ fn eval_builtin(expr: &Expr, args: &[Expr], module_name: Option<&str>, env: &mut
             )),
             "eval" => Some(eval_eval(args, module_name, env)),
             "print-env" => Some(eval_printenv(env, module_name)),
+            "define-macro" | "defmacro" => Some(eval_macro(args, env)),
+            "begin" => Some(eval_begin(args, module_name, env)),
             _ => None,
         },
         _ => None,
@@ -628,6 +784,13 @@ pub(crate) fn eval(exp: &Expr, namespace: Option<&str>, env: &mut Env) -> ScmRes
                             eval(&l.body, namespace, new_env)
                         }
 
+                        Expr::Macro(m) => {
+                            let params = m.params.clone();
+                            let new_env = &mut mk_lambda_env(params, args, env)?;
+                            let expanded = expand_macro(&m, args, new_env)?;
+                            eval(&expanded, namespace, new_env)
+                        },
+
                         _ => Err(ScmErr::Reason(
                             format!("not a procedure\n   expected a procedure or function as first form in unquoted list\n   given: {}", exp),
                         )),
@@ -639,6 +802,7 @@ pub(crate) fn eval(exp: &Expr, namespace: Option<&str>, env: &mut Env) -> ScmRes
         Expr::Lambda(_) => Err(ScmErr::Reason("unexpected form".to_string())),
         Expr::Ptr(_) => Err(ScmErr::Reason("unexpected pointer at the top level".to_string())),
         Expr::Void => Err(ScmErr::Reason("unexpected void".to_string())),
+        Expr::Macro(m) => Err(ScmErr::Reason(format!("unexpected macro: {:?}", m))),
     }
 }
 
