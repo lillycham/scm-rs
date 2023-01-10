@@ -16,8 +16,13 @@
           overlays = [
             mozilla
             (self: super: {
-              rustc = (self.rustChannelOf { date = rustDate; channel = "nightly"; }).rust;
-              cargo = (self.rustChannelOf { date = rustDate; channel = "nightly"; }).rust;
+              rustc = (self.rustChannelOf
+                { date = rustDate; channel = "nightly"; }
+              ).rust;
+
+              cargo = (self.rustChannelOf
+                { date = rustDate; channel = "nightly"; }
+              ).rust;
             })
           ];
         };
@@ -31,11 +36,20 @@
               nativeBuildInputs = [ pkg-config ];
               buildInputs = [ openssl ];
             };
+
         devShell = with pkgs; mkShell {
           nativeBuildInputs = [ pkg-config ];
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy openssl ];
+          buildInputs = [
+            cargo
+            rustc
+            rustfmt
+            pre-commit
+            rustPackages.clippy
+            openssl
+          ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
           PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
         };
-      });
+      }
+    );
 }
