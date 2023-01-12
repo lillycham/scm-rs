@@ -1,7 +1,10 @@
-use std::{collections::HashMap, rc::Rc, fs::read_to_string, io, path::Path};
+use std::{collections::HashMap, fs::read_to_string, io, path::Path, rc::Rc};
 
 use crate::{
-    lexer::{parse, parse_floats, parse_integrals, parse_list_of_symbols, parse_rats, tokenise, parse_integral},
+    lexer::{
+        parse, parse_floats, parse_integral, parse_integrals, parse_list_of_symbols, parse_rats,
+        tokenise,
+    },
     types::*,
 };
 
@@ -59,7 +62,6 @@ fn mk_lambda_env<'a>(params: Rc<Expr>, args: &[Expr], outer: &'a mut Env) -> Scm
 
     for (k, v) in syms.iter().zip(evaled_forms.iter()) {
         ops.insert(k.clone(), v.clone());
-        
     }
 
     Ok(Env {
@@ -118,7 +120,9 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
         "+".to_string(),
         Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
             let n = parse_nums(args)?;
-            let fst = n.first().ok_or(ScmErr::Reason("expected at least one number".to_string()))?;
+            let fst = n
+                .first()
+                .ok_or(ScmErr::Reason("expected at least one number".to_string()))?;
             Ok(match fst {
                 ScmNumber::Floating(_) => {
                     Expr::Floating(n.into_iter().map(|x| f64::try_from(x).unwrap()).sum())
@@ -264,9 +268,7 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
 
     ops.insert(
         "list".into(),
-        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
-            Ok(Expr::List(args.to_vec()))
-        }),
+        Expr::Func(|args: &[Expr]| -> ScmResult<Expr> { Ok(Expr::List(args.to_vec())) }),
     );
 
     ops.insert(
@@ -288,7 +290,7 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
     );
 
     ops.insert(
-        "reverse".into(), 
+        "reverse".into(),
         Expr::Func(|args: &[Expr]| -> ScmResult<Expr> {
             let list = match args.first() {
                 Some(Expr::List(l)) => Ok(l.clone()),
@@ -303,7 +305,6 @@ pub(crate) fn mk_env<'a>() -> Env<'a> {
     ops.insert("rest".into(), ops["cdr".into()].clone());
 
     // File operations
-    
 
     Env {
         ops,
@@ -329,7 +330,11 @@ fn eval_begin(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResul
 // }
 
 /// Define an expression in the environment
-pub(crate) fn eval_define(args: &[Expr], namespace: Option<&str>, env: &mut Env) -> ScmResult<Expr> {
+pub(crate) fn eval_define(
+    args: &[Expr],
+    namespace: Option<&str>,
+    env: &mut Env,
+) -> ScmResult<Expr> {
     if args.len() > 2 {
         return Err(ScmErr::Reason(
             "'define' only accepts two forms".to_string(),
@@ -414,24 +419,32 @@ fn eval_macro(args: &[Expr], env: &mut Env) -> ScmResult<Expr> {
 
     let name = match args[0] {
         Expr::Symbol(ref name) => name.clone(),
-        _ => return Err(ScmErr::Reason("expected symbol as first argument".to_string())),
+        _ => {
+            return Err(ScmErr::Reason(
+                "expected symbol as first argument".to_string(),
+            ))
+        }
     };
 
     let params = match args[1] {
         Expr::List(ref params) => Rc::new(Expr::List(params.clone())),
-        _ => return Err(ScmErr::Reason("expected list as second argument".to_string())),
+        _ => {
+            return Err(ScmErr::Reason(
+                "expected list as second argument".to_string(),
+            ))
+        }
     };
-
 
     let body = match args[2] {
         Expr::List(_) => Rc::new(args[2].clone()),
-        _ => return Err(ScmErr::Reason("expected list as third argument".to_string())),
+        _ => {
+            return Err(ScmErr::Reason(
+                "expected list as third argument".to_string(),
+            ))
+        }
     };
 
-    let macro_fn = ScmMacro {
-        params,
-        body,
-    };
+    let macro_fn = ScmMacro { params, body };
 
     // Store the macro in the given environment
     env.ops.insert(name, Expr::Macro(macro_fn));
@@ -445,14 +458,22 @@ fn expand_macro(macro_fn: &ScmMacro, args: &[Expr], env: &mut Env) -> ScmResult<
     // Bind the arguments to the macro parameters
     let params = match &*macro_fn.params {
         Expr::List(params) => params,
-        _ => return Err(ScmErr::Reason("expected list as macro parameters".to_string())),
+        _ => {
+            return Err(ScmErr::Reason(
+                "expected list as macro parameters".to_string(),
+            ))
+        }
     };
     for (param, arg) in params.iter().zip(args.iter()) {
         match param {
             Expr::Symbol(name) => {
                 bindings.insert(name.clone(), arg.clone());
             }
-            _ => return Err(ScmErr::Reason("expected symbol as macro parameter".to_string())),
+            _ => {
+                return Err(ScmErr::Reason(
+                    "expected symbol as macro parameter".to_string(),
+                ))
+            }
         }
     }
 
@@ -488,20 +509,28 @@ fn expand_macro(macro_fn: &ScmMacro, args: &[Expr], env: &mut Env) -> ScmResult<
 /// Eval a file and load it into the environment
 fn require_file(filename: &str, why_loaded: &str, env: &mut Env) -> ScmResult<()> {
     let path = env.search_path.unwrap().join(filename);
-    let lib  = read_to_string(path).unwrap();
+    let lib = read_to_string(path).unwrap();
     let toks = tokenise(&mut lib.chars().peekable());
-    let should_load = env.loaded_modules.clone().into_iter().filter(|m| m.name == filename).collect::<Vec<_>>().is_empty();
+    let should_load = env
+        .loaded_modules
+        .clone()
+        .into_iter()
+        .filter(|m| m.name == filename)
+        .collect::<Vec<_>>()
+        .is_empty();
 
     if !should_load {
         return Ok(());
     } else {
-        env.loaded_modules.push(Module {
-            name: filename.to_string(),
-            loaded_from: why_loaded.to_string(),
-            //exports: vec![],
-        });
-        match parse_eval(toks, Some(filename), env, 1) {
-            Ok(_) => Ok(()),
+        match parse_eval(toks, Some(filename), env, 1, None) {
+            Ok((_, syms)) => {
+                env.loaded_modules.push(Module {
+                    name: filename.to_string(),
+                    loaded_from: why_loaded.to_string(),
+                    exports: syms,
+                });
+                Ok(())
+            }
             Err(e) => Err(e),
         }
     }
@@ -509,7 +538,12 @@ fn require_file(filename: &str, why_loaded: &str, env: &mut Env) -> ScmResult<()
 
 /// Test if a mod is loaded
 pub(crate) fn should_load_mod(mod_name: &str, env: &Env) -> bool {
-    let loaded = env.loaded_modules.clone().into_iter().filter(|m| m.name == mod_name).collect::<Vec<_>>();
+    let loaded = env
+        .loaded_modules
+        .clone()
+        .into_iter()
+        .filter(|m| m.name == mod_name)
+        .collect::<Vec<_>>();
     loaded.is_empty()
 }
 
@@ -522,8 +556,8 @@ fn require_synthetic(module_name: Option<&str>, why_loaded: &str, env: &mut Env)
         env.loaded_modules.push(Module {
             name: mod_name,
             loaded_from: why_loaded.to_string(),
-            //exports: vec![],
-        });        
+            exports: vec![],
+        });
         Ok(())
     }
 }
@@ -574,14 +608,13 @@ fn require_imperative_constructs(env: &mut Env) -> ScmResult<()> {
                     _ => Err(ScmErr::Reason("expected a list".to_string())),
                 }?;
                 eval(&Expr::List(unpacked.to_owned()), None, &mut mk_env())?;
-            };
-            
+            }
+
             Ok(Expr::Void)
         }),
     );
     Ok(())
 }
-
 
 /// Special `require` form for loading the `sys` library
 fn require_sys(env: &mut Env) -> ScmResult<()> {
@@ -625,7 +658,6 @@ fn require_sys(env: &mut Env) -> ScmResult<()> {
         }),
     );
 
-
     Ok(())
 }
 
@@ -634,7 +666,7 @@ fn require_sys(env: &mut Env) -> ScmResult<()> {
 /// Modules are loaded from the search path by require_file().
 /// If the module is already loaded, it is not reloaded, as loaded modules are
 /// tracked in the environment.
-/// 
+///
 /// Synthetically loaded modules are modules that are loaded by the interpreter
 /// itself, and are not loaded from a file. They are loaded by a specialised
 /// function for each module, e.g. require_sys() for the sys module. The
@@ -646,38 +678,34 @@ pub(crate) fn eval_require(args: &[Expr], why_loaded: &str, env: &mut Env) -> Sc
     ))?;
 
     Ok(match filename {
-        Expr::Quote(q) => {
-            match q.to_owned().as_ref() {
-                Expr::Symbol(s) => {
-                    match &s[..] {
-                        "sys" => {
-                            require_sys(env)?;
-                            require_synthetic(Some("sys"), why_loaded, env)?;
-                            Ok(Expr::Bool(true))
-                        }
+        Expr::Quote(q) => match q.to_owned().as_ref() {
+            Expr::Symbol(s) => match &s[..] {
+                "sys" => {
+                    require_sys(env)?;
+                    require_synthetic(Some("sys"), why_loaded, env)?;
+                    Ok(Expr::Bool(true))
+                }
 
-                        "unsafe" => {
-                            require_unsafe(env)?;
-                            require_synthetic(Some("unsafe"), why_loaded, env)?;
-                            Ok(Expr::Bool(true))
-                        }
+                "unsafe" => {
+                    require_unsafe(env)?;
+                    require_synthetic(Some("unsafe"), why_loaded, env)?;
+                    Ok(Expr::Bool(true))
+                }
 
-                        "imperative/constructs" => {
-                            require_imperative_constructs(env)?;
-                            require_synthetic(Some("imperative/constructs"), why_loaded, env)?;
-                            Ok(Expr::Bool(true))
-                        }
-                        _ => {
-                            let search_path = env.search_path.clone().unwrap();
-                            let file = search_path.join(s.to_string());
-                            require_file(&file.to_str().unwrap(), why_loaded, env)?;
-                            Ok(Expr::Bool(true))
-                        }
-                    }
-                },
-                _ => return Err(ScmErr::Reason("expected a quoted symbol".to_string())),
-            }
-        }
+                "imperative/constructs" => {
+                    require_imperative_constructs(env)?;
+                    require_synthetic(Some("imperative/constructs"), why_loaded, env)?;
+                    Ok(Expr::Bool(true))
+                }
+                _ => {
+                    let search_path = env.search_path.clone().unwrap();
+                    let file = search_path.join(s.to_string());
+                    require_file(&file.to_str().unwrap(), why_loaded, env)?;
+                    Ok(Expr::Bool(true))
+                }
+            },
+            _ => return Err(ScmErr::Reason("expected a quoted symbol".to_string())),
+        },
         _ => Err(ScmErr::Reason(format!(
             "expected symbol in require form, got {}",
             filename
@@ -685,15 +713,26 @@ pub(crate) fn eval_require(args: &[Expr], why_loaded: &str, env: &mut Env) -> Sc
     }?)
 }
 
-fn eval_printenv(env: &Env, namespace: Option<&str>) -> ScmResult<Expr>{
+fn eval_printenv(env: &Env, namespace: Option<&str>) -> ScmResult<Expr> {
     use itertools::Itertools;
     println!("op table (current scope):");
     for key in env.ops.clone().keys().into_iter().sorted() {
         println!("{: <10}: {:?}", key, env.ops[key]);
     }
-    println!("loaded modules: {:#?}", env.loaded_modules.clone().into_iter().map(|m| (m.name,m.loaded_from)).collect::<Vec<_>>());
-    println!("search path: {:?}", env.search_path.unwrap_or(Path::new("")));
-    println!("in addition to the above ops, there are also the following builtin syntax forms:
+    println!(
+        "loaded modules: {:#?}",
+        env.loaded_modules
+            .clone()
+            .into_iter()
+            .map(|m| (m.name, m.loaded_from, m.exports))
+            .collect::<Vec<_>>()
+    );
+    println!(
+        "search path: {:?}",
+        env.search_path.unwrap_or(Path::new(""))
+    );
+    println!(
+        "in addition to the above ops, there are also the following builtin syntax forms:
     - `define`
     - `eval`
     - `'`
@@ -701,7 +740,8 @@ fn eval_printenv(env: &Env, namespace: Option<&str>) -> ScmResult<Expr>{
     - `if`
     - `require`
     - `print-env`
-    ");
+    "
+    );
 
     println!("namespace: {:?}", namespace.unwrap_or("???"));
 
@@ -721,16 +761,24 @@ fn eval_eval(args: &[Expr], module_name: Option<&str>, env: &mut Env) -> ScmResu
     eval(&Expr::List(unpacked.to_owned()), Some(&new_modname), env)
 }
 
-fn eval_builtin(expr: &Expr, args: &[Expr], module_name: Option<&str>, env: &mut Env) -> Option<ScmResult<Expr>> {
+fn eval_builtin(
+    expr: &Expr,
+    args: &[Expr],
+    module_name: Option<&str>,
+    env: &mut Env,
+) -> Option<ScmResult<Expr>> {
     match expr {
         Expr::Symbol(s) => match s.as_str() {
             "define" => Some(eval_define(args, module_name, env)),
             "if" => Some(eval_if(args, module_name, env)),
             "lambda" => Some(eval_lambda(args)),
-            "require" => Some(eval_require(args,
-                &format!("loaded by require from {}",
-                module_name.unwrap_or("unknown")),
-                env
+            "require" => Some(eval_require(
+                args,
+                &format!(
+                    "loaded by require from {}",
+                    module_name.unwrap_or("unknown")
+                ),
+                env,
             )),
             "eval" => Some(eval_eval(args, module_name, env)),
             "print-env" => Some(eval_printenv(env, module_name)),
@@ -780,7 +828,7 @@ pub(crate) fn eval(exp: &Expr, namespace: Option<&str>, env: &mut Env) -> ScmRes
 
                         Expr::Lambda(l) => {
                             // println!("env: {:?}", env.ops);
-                            let new_env = &mut mk_lambda_env(l.params, args, env)?;                           
+                            let new_env = &mut mk_lambda_env(l.params, args, env)?;
                             eval(&l.body, namespace, new_env)
                         }
 
@@ -800,13 +848,21 @@ pub(crate) fn eval(exp: &Expr, namespace: Option<&str>, env: &mut Env) -> ScmRes
         }
         Expr::Func(_) => Err(ScmErr::Reason("unexpected form".to_string())),
         Expr::Lambda(_) => Err(ScmErr::Reason("unexpected form".to_string())),
-        Expr::Ptr(_) => Err(ScmErr::Reason("unexpected pointer at the top level".to_string())),
+        Expr::Ptr(_) => Err(ScmErr::Reason(
+            "unexpected pointer at the top level".to_string(),
+        )),
         Expr::Void => Err(ScmErr::Reason("unexpected void".to_string())),
         Expr::Macro(m) => Err(ScmErr::Reason(format!("unexpected macro: {:?}", m))),
     }
 }
 
-pub(crate) fn parse_eval(input: Vec<String>, namespace: Option<&str> ,env: &mut Env, line_num: i32) -> ScmResult<Expr> {
+pub(crate) fn parse_eval(
+    input: Vec<String>,
+    namespace: Option<&str>,
+    env: &mut Env,
+    line_num: i32,
+    acc: Option<Vec<Expr>>,
+) -> ScmResult<(Expr, Vec<Expr>)> {
     let (parsed, unparsed) = match parse(&input) {
         Ok((parsed, unparsed)) => (parsed, unparsed),
         Err(e) => {
@@ -816,8 +872,17 @@ pub(crate) fn parse_eval(input: Vec<String>, namespace: Option<&str> ,env: &mut 
             )))
         }
     };
+
+    let mut acc = acc.unwrap_or(vec![]).clone();
+
     let evaluated = match eval(&parsed, namespace, env) {
-        Ok(evaluated) => evaluated,
+        Ok(expr) => {
+            match expr {
+                Expr::Symbol(_) => acc.push(expr.clone()),
+                _ => {}
+            };
+            expr
+        }
         Err(e) => {
             return Err(ScmErr::Reason(format!(
                 "on line ({}): eval error: {}",
@@ -827,8 +892,8 @@ pub(crate) fn parse_eval(input: Vec<String>, namespace: Option<&str> ,env: &mut 
     };
 
     if !unparsed.is_empty() {
-        parse_eval(unparsed.to_vec(), namespace, env, line_num + 1)
+        parse_eval(unparsed.to_vec(), namespace, env, line_num + 1, Some(acc))
     } else {
-        Ok(evaluated)
+        Ok((evaluated, acc.clone()))
     }
 }
