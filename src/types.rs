@@ -52,8 +52,8 @@ pub(crate) enum Expr {
 impl std::fmt::Debug for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Expr::Floating(n) => write!(f, "{}", n),
-            Expr::Rational(ref r) => write!(f, "{}", r),
+            Expr::Floating(n) => write!(f, "{} ", n),
+            Expr::Rational(ref r) => write!(f, "{}l", r),
             Expr::Integral(n) => write!(f, "{}", n),
             Expr::Symbol(ref s) => write!(f, "{}", s),
             Expr::String(ref s) => write!(f, "{}", s),
@@ -173,10 +173,11 @@ pub(crate) struct Frame {
 /// A Call Stack of stack frames.
 pub(crate) type Stack = Vec<Frame>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct Module {
     pub(crate) name: String,
     pub(crate) loaded_from: String,
+    pub(crate) exports: Vec<Expr>,
     // pub(crate) exports: HashMap<String, Expr>,
 }
 

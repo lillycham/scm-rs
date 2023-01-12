@@ -37,7 +37,6 @@ enum Commands {
 
 fn main() {
     let env = &mut mk_env();
-    //let flags = args().collect::<Vec<_>>();
     let flags = Cli::parse();
 
     // Ensure that the interpreter library directory exists
@@ -81,8 +80,9 @@ fn main() {
                     )),
                     env,
                     1,
+                    None,
                 ) {
-                    Ok(r) => println!("=> {}", r),
+                    Ok((r, _)) => println!("=> {}", r),
                     Err(e) => println!("\x1b[31;m=> Error: {}\x1b[0m", e),
                 }
             }
